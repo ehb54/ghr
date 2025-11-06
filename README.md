@@ -79,7 +79,7 @@ All commands are executed from the `ghr` interactive prompt.
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `ca <line> <comment>` | **Add** a positional comment to the current file. | `ca 12 Needs refactoring` |
+| `ca <line> <comment>` | **Add** a positional comment to the current file. | `ca 12` |
 | `cd <pos>` | **Delete** a local comment by its position index (from `rs`). | `cd 1` |
 | `lc` | Load and display all **submitted positional review comments** from other reviewers. | `lc` |
 | `lgc` | Load and display all **general PR discussion comments** (e.g., CI/Linter reports). | `lgc` |
