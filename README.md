@@ -41,10 +41,10 @@
 ### Running ghr
 
 1.  Clone a Git repository that has open Pull Requests.
-2.  Place the `ghr.pl` script in a convenient location (e.g., inside your project directory).
+2.  Place the `ghr` script in a convenient location (e.g., inside your project directory).
 3.  Start the interactive session:
     ```bash
-    perl ghr.pl
+    perl ghr
     ```
 
 -----
