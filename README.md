@@ -9,7 +9,7 @@
 
 ## ✨ Features
 
-  * **Interactive Session:** Persistent state tracking for the current PR, file, and local comments.
+  * **Interactive Session:** Persistent state tracking for the current PR, file, and local comments. Command history.
   * **Efficient Navigation:** Use simple commands (`+`, `-`) to jump between changed files.
   * **File Selection:** Select files by index or full name (`sf 5`, `sf file.c`).
   * **Diff Viewing:** View diffs with standard output (`sd`) or with whitespace changes ignored (`sdiw`).
@@ -67,6 +67,8 @@ All commands are executed from the `ghr` interactive prompt.
 | `?` | Display the list of available commands. | `?` |
 | `h` | Show command history. | `h` |
 | `q` | Quit the application. | `q` |
+| `!!` | repeat previous command. | `!!` |
+| `!n` | repeat command from history. | `!27` |
 
 ### 📁 File Navigation & Viewing
 
