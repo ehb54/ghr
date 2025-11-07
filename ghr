@@ -20,24 +20,34 @@ my %comments = (
     'review_state' => undef # 'approve' | 'request_changes'
 );
 my %files_data;
+my @grep_set = ();      # Array of 1-based file indices that match the last 'g' regexp
+my $current_grep_index = undef; # 1-based index into @grep_set
+my @command_history = (); # Array to store executed commands
+my $history_max_size = 100; # Maximum number of commands to store
 
 # --- Command Dispatch Table ---
 # Maps user input to the corresponding subroutine
 my %COMMANDS = (
     'q'       => \&cmd_quit,
-    'h'       => \&cmd_help,
+    '?'       => \&cmd_help,
+    'h'       => \&cmd_history,
     'lpr'     => \&cmd_list_prs,
     'lc'      => \&cmd_load_comments,
     'lgc'     => \&cmd_load_general_comments,
     'pr'      => \&cmd_select_pr,
     'lf'      => \&cmd_list_files,
-    'sf'      => \&cmd_select_file,
+    'fn'      => \&cmd_select_file,
+    'f'       => \&cmd_select_file_name_regexp,
     '+'       => \&cmd_select_file,
     '-'       => \&cmd_select_file,
-    'sd'      => \&cmd_show_diffs,
-    'sdiw'    => \&cmd_show_diffs_ignore_whitespace,
-    'so'      => \&cmd_show_original,
-    'sn'      => \&cmd_show_new,
+    'dd'      => \&cmd_show_diffs,
+    'g'       => \&cmd_grep_diffs,
+    'gl'      => \&cmd_grep_local,
+    'g+'      => \&cmd_grep_diffs_next,
+    'g-'      => \&cmd_grep_diffs_prev,
+    'ddiw'    => \&cmd_show_diffs_ignore_whitespace,
+    'do'      => \&cmd_show_original,
+    'dn'      => \&cmd_show_new,
     'ca'      => \&cmd_add_comment,
     'cd'      => \&cmd_delete_comment,
     'cp'      => \&cmd_push_comments,
@@ -86,28 +96,49 @@ sub get_prompt {
 }
 
 sub main {
+    load_history();
     while (1) {
-        # Print the dynamic prompt
+        # 1. Print the dynamic prompt
         print get_prompt();
 
-        # Read line (Control-D/EOF will result in undef)
-        my $input = <STDIN>;
-        last unless defined $input; # Exit on EOF (Ctrl-D)
+        # 2. Read line (Control-D/EOF will result in undef)
+        my $raw_input = <STDIN>;
+        last unless defined $raw_input; # Exit on EOF (Ctrl-D)
 
-        chomp $input;
-        next unless length $input; # Skip empty lines
+        chomp $raw_input;
+        my $user_input = $raw_input;
+        $user_input =~ s/^\s+|\s+$//g; # Trim whitespace
 
-        # Split into command and arguments
-        my @parts = split /\s+/, $input, 2;
+        next unless length $user_input; # Skip empty lines
+
+        # 3. History Preprocessing
+        # This function resolves !! or !N into the actual command string.
+        # It returns undef for history-only commands like 'h' or '!!:p'.
+        my $executed_command = process_history_input($user_input);
+
+        # If $executed_command is undef, it means the input was 'h', '!!:p', or an error.
+        # We check for 'h' explicitly here because 'process_history_input' only handles '!' expansions.
+        if (!defined $executed_command) {
+            # Handle 'h' if it wasn't caught by the history processor
+            if ($user_input =~ /^\s*h(istory)?\s*$/i) {
+                # This ensures 'h' still works if it's not a history expansion.
+                cmd_history();
+            }
+            next; # Skip command dispatch for history print/error
+        }
+
+        # 4. Command Dispatch and Execution
+        # Use the resolved command for dispatch
+        my @parts = split /\s+/, $executed_command, 2;
         my $cmd = lc $parts[0];
         my $args = $parts[1] // '';
 
-        # --- NON-BREAKING FIX: If command is '+' or '-', set $args to the command itself ---
+        # --- FIX: If command is '+' or '-', set $args to the command itself ---
+        # This ensures the '+' command passes '+' as the argument to cmd_select_file
         if (($cmd eq '+' || $cmd eq '-') && $args eq '') {
             $args = $cmd;
         }
 
-        # Dispatch the command
         if (my $sub = $COMMANDS{$cmd}) {
             eval {
                 $sub->($args);
@@ -118,7 +149,21 @@ sub main {
         } else {
             print "Unknown command: '$cmd'. Type 'h' for help.\n";
         }
+
+        # 5. Store the executed command in history
+        # Store only if it wasn't a history lookup/print and was successfully dispatched (or attempted).
+        # We store the fully resolved command string ($executed_command).
+        # Note: We skip storing history lookups (like '!!', '!5', 'h') to keep the history clean.
+        if ($user_input !~ /^\s*(h(istory)?|!\d*|!!)(:\S*)?\s*$/i) {
+            push @command_history, $executed_command;
+
+            # Keep array size bounded
+            if (scalar(@command_history) > $history_max_size) {
+                shift @command_history;
+            }
+        }
     }
+    save_history();
     print "\nExiting.\n";
 }
 
@@ -163,17 +208,25 @@ sub cmd_help {
 ## GitHub Review CLI (ghr) Help
 
 q         // quit (or control-D/EOF)
-h         // print this help
+h         // command history
+?         // print this help
 lpr       // list PRs (Uses 'gh pr list')
 pr PR#    // select PR (e.g., 'pr 123')
 lf        // list files in the current PR
 lc        // list pushed comments in the current PR
 lgc       // list global comments in the current PR
-sf file#  // select file by number, or use '+' or '-' for next/previous
+fn file#  // select file by number, or use '+' or '-' for next/previous
+f name    // file by name regex
 +         // select next file and show diffs
-sd        // show diffs for selected file
-so        // show original lines for selected file (with line numbers)
-sn        // show new lines for selected file (with positional info)
+-         // select previous file and show diffs
+dd        // show diffs for selected file
+ddiw      // show diffs for selected file ignore whitespace
+do        // show original lines for selected file (with line numbers)
+dn        // show new lines for selected file (with positional info)
+g regexp  // grep diffs and list files and their file numbers that match
+gl regexp // grep local files
+g+        // select next file from last g set
+g-        // select previous file from last g set
 ca pos    // add comment. 'pos' is position # from 'sn', or 'g' for global.
 cd pos    // delete comment by position # or 'g' for global.
 cp        // pushes all local comments to GitHub (asks confirmation)
@@ -197,7 +250,7 @@ sub cmd_select_pr {
         # Check if PR is valid and get *all* files using the API
         # This bypasses the 100-file limit of 'gh pr view'
         # The --jq flag filters to just the filenames, one per line.
-        my @pr_files = `gh api --paginate "repos/{owner}/{repo}/pulls/$pr_num/files" --jq ".[].filename" 2>/dev/null`;
+        @pr_files = `gh api --paginate "repos/{owner}/{repo}/pulls/$pr_num/files" --jq ".[].filename" 2>/dev/null`;
         
         if ($? != 0) {
             print "Error: PR #$pr_num not found or inaccessible.\n";
@@ -525,8 +578,6 @@ sub cmd_show_new {
     }
 }
 
-use Data::Dumper; # Useful for debugging the data structure
-
 sub cmd_add_comment {
     my ($args) = @_;
     my ($pos, $initial_text) = split /\s+/, $args, 2;
@@ -810,7 +861,6 @@ sub cmd_review_summary {
     }
 }
 
-use JSON 'encode_json';
 use File::Temp 'tempfile';
 
 # Utility: Builds the comments.json file required by 'gh pr review'
@@ -1064,8 +1114,6 @@ sub _submit_review {
         unlink $temp_file;
     }
 }
-
-use JSON 'decode_json'; 
 
 sub cmd_load_comments {
     if (!defined $current_pr) {
@@ -1406,7 +1454,7 @@ Suppress any introductory or conversational preambles. Get straight to the revie
 
     print "--- Starting Interactive Gemini Chat ---\n";
     print "Model: $model\n";
-    print "Persona: '$system_prompt'\n";
+    print "Persona: '" . substr( $system_prompt, 0, 80 ) . "...'\n";
     print "Type /q or /e to end the conversation.\n\n";
 
     # Create the conversational session object (this holds the memory)
@@ -1453,4 +1501,389 @@ Suppress any introductory or conversational preambles. Get straight to the revie
             print "🤖 jim: (I received no response from the model.)\n\n";
         }
     }
+}
+
+sub cmd_grep_diffs {
+    my ($regexp) = @_;
+
+    if (!defined $current_pr) {
+        print "Error: No PR selected. Use 'pr <PR#>' first.\n";
+        return;
+    }
+
+    if (!$regexp) {
+        print "Usage: g <regexp>\n";
+        return;
+    }
+
+    # Reset the grep set and index
+    @grep_set = ();
+    $current_grep_index = undef;
+
+    # Get the sorted list of file names and search
+    my @pr_files = sort keys %files_data;
+
+    print "Searching diffs for **'$regexp'** in " . scalar(@pr_files) . " files...\n";
+
+    for my $i (0 .. $#pr_files) {
+        my $file_name = $pr_files[$i];
+        my $file_index = $i + 1; # 1-based index
+
+        # Retrieve the raw diff content for the file
+        my ($diff, $err) = get_file_diff_content($file_name);
+
+        # Skip if error
+        next if $err;
+
+        # Search only added (+) or removed (-) lines, ignoring context lines (space)
+        my $match_found = 0;
+        foreach my $line (split /\n/, $diff) {
+            # Use '^[+-]' to target only changed lines in the diff
+            if ($line =~ /^[+-]/ && $line =~ /$regexp/i) {
+                $match_found = 1;
+                last;
+            }
+        }
+
+        if ($match_found) {
+            # Store the **1-based file index**
+            push @grep_set, $file_index;
+            print sprintf("  [ %2d ]: %s\n", $file_index, $file_name);
+        }
+    }
+
+    my $match_count = scalar(@grep_set);
+
+    if ($match_count > 0) {
+        print "\nFound **$match_count** file(s) matching '$regexp'.\n";
+        # Select the first matching file and set the grep index
+        $current_grep_index = 1;
+        my $first_file_index = $grep_set[0];
+        print "Selecting first matching file (Index $first_file_index).\n";
+
+        # Select file and show diffs automatically
+        cmd_select_file($first_file_index, 0);
+    } else {
+        print "No files found matching '$regexp' in diffs.\n";
+    }
+}
+
+# --- Utility to navigate the grep set (used by g+ and g-) ---
+sub _navigate_grep_set {
+    my ($direction) = @_; # +1 for next, -1 for previous
+
+    if (!@grep_set) {
+        print "No previous 'g' command set. Use 'g <regexp>' first.\n";
+        return;
+    }
+
+    # Ensure index is defined (should be 1 after 'g')
+    if (!defined $current_grep_index) {
+        $current_grep_index = 1;
+    }
+
+    my $new_grep_index = $current_grep_index + $direction;
+    my $max_grep_index = scalar(@grep_set);
+
+    if ($new_grep_index < 1) {
+        print "Beginning of grep set reached (at file 1).\n";
+        return;
+    } elsif ($new_grep_index > $max_grep_index) {
+        print "End of grep set reached (at file $max_grep_index).\n";
+        return;
+    }
+
+    # Update state
+    $current_grep_index = $new_grep_index;
+
+    # Get the actual 1-based file index from the grep set array
+    my $file_index_to_select = $grep_set[$current_grep_index - 1];
+
+    print "Navigating to file **$current_grep_index/$max_grep_index** in grep set (File index $file_index_to_select).\n";
+
+    # Select file and show diffs
+    cmd_select_file($file_index_to_select, 0);
+}
+
+### `cmd_grep_diffs_next` (`g+`)
+sub cmd_grep_diffs_next {
+    _navigate_grep_set(1);
+}
+
+### `cmd_grep_diffs_prev` (`g-`)
+sub cmd_grep_diffs_prev {
+    _navigate_grep_set(-1);
+}
+
+sub cmd_grep_local {
+    my ($regexp) = @_;
+
+    if (!defined $current_pr) {
+        print "Error: No PR selected. Use 'pr <PR#>' first.\n";
+        return;
+    }
+
+    if (!$regexp) {
+        print "Usage: gl <regexp>\n";
+        return;
+    }
+
+    # Reset the global grep set and index for navigation
+    @grep_set = ();
+    $current_grep_index = undef;
+
+    # Assuming @pr_files contains the full list of file paths for the current PR
+    my @pr_files_sorted = sort @pr_files;
+
+    print "Branch: " . get_current_branch() . "\n";
+    print "🔍 Searching **local files** for pattern: **'$regexp'** in " . scalar(@pr_files_sorted) . " files...\n";
+
+    # Iterate through the files tracked in the PR
+    for my $i (0 .. $#pr_files_sorted) {
+        my $file_name = $pr_files_sorted[$i];
+        my $file_index = $i + 1; # 1-based index
+
+        # Pure Perl File Reading with open handle
+        unless (-f $file_name) {
+            print STDERR "Skipping '$file_name': File not found locally.\n";
+            next;
+        }
+
+        open my $fh, '<', $file_name or do {
+            warn "Could not open '$file_name': $!\n";
+            next;
+        };
+
+        my $match_found = 0;
+        my $line_num = 0;
+
+        # Search line by line
+        while (my $line = <$fh>) {
+            $line_num++;
+
+            # Perform the case-sensitive regex match
+            if ($line =~ /$regexp/i) {
+                if (!$match_found) {
+                    # Only print header once per file
+                    print "\n-- **$file_name** (Index $file_index) --\n";
+                }
+                $match_found = 1;
+
+                # Print the line number and the matching line content
+                print sprintf("  %4d: %s", $line_num, $line);
+            }
+        }
+        close $fh;
+
+        if ($match_found) {
+            # Store the **1-based file index** for g+/g- navigation
+            push @grep_set, $file_index;
+        }
+    }
+
+    my $match_count = scalar(@grep_set);
+
+    if ($match_count > 0) {
+        print "\nFound **$match_count** file(s) matching '$regexp'.\n";
+
+        # 🤝 Integrate with g+ / g- navigation
+        $current_grep_index = 1;
+        my $first_file_index = $grep_set[0];
+        print "Selecting first matching file (Index $first_file_index). Use 'g+'/'g-' to navigate.\n";
+
+        # Select file and show diffs automatically (assuming cmd_select_file exists)
+        cmd_select_file($first_file_index, 1);
+    } else {
+        print "No files found matching '$regexp' locally.\n";
+    }
+}
+
+sub get_current_branch {
+    # Check if we are in a Git repository
+    if (-d ".git") {
+        # Executes 'git rev-parse --abbrev-ref HEAD' to get the current branch name
+        my $branch = `git rev-parse --abbrev-ref HEAD 2>/dev/null`;
+        chomp $branch;
+        return $branch;
+    }
+    return "NOT-IN-GIT";
+}
+
+sub cmd_history {
+    print "Command History:\n";
+    # Show the last 10 commands by default
+    my $start = scalar(@command_history) > 10 ? scalar(@command_history) - 10 : 0;
+
+    for my $i ($start .. $#command_history) {
+        # Print 1-based index (i + 1) and the command
+        printf "  %4d  %s\n", $i + 1, $command_history[$i];
+    }
+}
+
+# --- NEW HISTORY PROCESSING FUNCTION ---
+# Returns the final command string to be executed, or undef if only printing/error.
+sub process_history_input {
+    my ($input) = @_;
+
+    # 1. Handle history expansion: !! or !N, optionally followed by :p
+    if ($input =~ /^\s*(!\d*|!!)(:\S*)?\s*$/) {
+        my $history_spec = $1; # e.g., '!!' or '!10'
+        my $modifier = $2 || ''; # e.g., ':p'
+
+        my $history_size = scalar(@command_history);
+        my $history_index;
+
+        # Determine the target index
+        if ($history_spec eq '!!') {
+            $history_index = $history_size; # Target is the last command
+        } elsif ($history_spec =~ /^!(\d+)$/) {
+            $history_index = $1; # Target is the explicit index
+        }
+
+        # Check for bounds (1-based index)
+        if ($history_index < 1 || $history_index > $history_size) {
+            print STDERR "History error: Event number $history_index not found.\n";
+            return undef;
+        }
+
+        # Get the actual command string (0-based array access)
+        my $resolved_command = $command_history[$history_index - 1];
+
+        # Handle the ':p' modifier (Print only)
+        if ($modifier eq ':p') {
+            print ">> $resolved_command\n";
+            return undef; # Do not execute
+        }
+
+        # Default: Execute the command
+        print ">> $resolved_command\n";
+        return $resolved_command;
+    }
+
+    # 2. Return the input as-is for normal commands or 'h'
+    return $input;
+}
+
+sub cmd_select_file_name_regexp {
+    my ($regexp) = @_;
+
+    if (!defined $current_pr) {
+        print "Error: No PR selected. Use 'pr <PR#>' first.\n";
+        return;
+    }
+
+    if (!$regexp) {
+        print "Usage: f <regexp> or fn <regexp>\n";
+        return;
+    }
+
+    # Reset/initialize the list of matching files
+    my @matched_files = ();
+
+    # Assuming @pr_files is populated with the full list of file paths.
+    # We must use the sorted list from cmd_list_files, which is implicit
+    # if we rely on the 1-based index that 'lf' uses.
+    my @pr_files_sorted = sort @pr_files;
+
+    print "Searching file names for pattern: **'$regexp'**...\n";
+
+    # Iterate through the files tracked in the PR
+    for my $i (0 .. $#pr_files_sorted) {
+        my $file_name = $pr_files_sorted[$i];
+        my $file_index = $i + 1; # 1-based index
+
+        # Perform the regex match on the file path
+        # Using 'i' for case-insensitive matching by default (common for file names)
+        if ($file_name =~ /$regexp/i) {
+            # Store the 1-based index and the file name
+            push @matched_files, {
+                index => $file_index,
+                name  => $file_name
+            };
+        }
+    }
+
+    my $match_count = scalar(@matched_files);
+
+    if ($match_count > 0) {
+        print "\nFound **$match_count** file(s) matching '$regexp':\n";
+
+        # List all found files
+        foreach my $match (@matched_files) {
+            print sprintf(" %4d : %s\n", $match->{index}, $match->{name});
+        }
+
+        # Select the first matching file
+        my $first_match = $matched_files[0];
+        my $first_file_index = $first_match->{index};
+
+        print "\nSelecting first matching file (Index $first_file_index).\n";
+
+        # Select file and show diffs automatically (assuming cmd_select_file exists)
+        # Note: $show_diffs=1 is the argument typically used to show diffs immediately.
+        cmd_select_file($first_file_index, 1);
+
+    } else {
+        print "No files found matching '$regexp' in the PR file list.\n";
+    }
+}
+
+# --- New Utility for History File Path ---
+# Stores history in a dotfile in the current working directory for simplicity.
+# This makes the history context-specific to where ghr is run (e.g., inside a repo).
+sub get_history_file_path {
+    return abs_path('.') . "/.ghr_command_history";
+}
+
+# --- Load History from File ---
+sub load_history {
+    my $history_file = get_history_file_path();
+
+    if (-f $history_file) {
+        open my $fh, '<', $history_file or do {
+            warn "Warning: Could not open history file for reading: $!\n";
+            return;
+        };
+
+        # Read history line by line
+        my @loaded_history;
+        while (my $line = <$fh>) {
+            chomp $line;
+            push @loaded_history, $line;
+        }
+        close $fh;
+
+        # Replace the global array, respecting the max size
+        # $history_max_size is defined in your global state (default 100)
+        @command_history = @loaded_history;
+        while (scalar(@command_history) > $history_max_size) {
+            shift @command_history;
+        }
+
+        print "Loaded " . scalar(@command_history) . " commands from history.\n";
+    }
+}
+
+# --- Save History to File ---
+sub save_history {
+    my $history_file = get_history_file_path();
+
+    # Save only the history that fits within the configured maximum size
+    my @history_to_save = @command_history;
+    while (scalar(@history_to_save) > $history_max_size) {
+        shift @history_to_save;
+    }
+
+    open my $fh, '>', $history_file or do {
+        warn "Warning: Could not open history file for writing: $!\n";
+        return;
+    };
+
+    # Write each command on a new line
+    foreach my $command (@history_to_save) {
+        print $fh "$command\n";
+    }
+    close $fh;
+
+    print "Saved " . scalar(@history_to_save) . " commands to history file.\n";
 }

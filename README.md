@@ -64,7 +64,8 @@ All commands are executed from the `ghr` interactive prompt.
 | :--- | :--- | :--- |
 | `pr <#>` | Select and load the files for a specific Pull Request. | `pr 301` |
 | `lpr` | List your current open Pull Requests. | `lpr` |
-| `h` | Display the list of available commands. | `h` |
+| `?` | Display the list of available commands. | `?` |
+| `h` | Show command history. | `h` |
 | `q` | Quit the application. | `q` |
 
 ### 📁 File Navigation & Viewing
@@ -72,13 +73,18 @@ All commands are executed from the `ghr` interactive prompt.
 | Command | Description | Example |
 | :--- | :--- | :--- |
 | `lf` | List all files in the current PR. | `lf` |
-| `sf <index>` | Select a file by its index number (from `lf` list). | `sf 5` |
+| `fn <index>` | Select a file by its index number (from `lf` list). | `fn 5` |
+| `f  <name>` | Select a file by its name regex. | `f \.h$` |
 | **`+`** | Move to and view the **next** file in the PR. | `+` |
 | **`-`** | Move to and view the **previous** file in the PR. | `-` |
-| `sd` | Show the standard Git diff for the currently selected file. | `sd` |
-| **`sdiw`** | Show the diff **ignoring whitespace** changes. | `sdiw` |
-| `so` | Show the **original** file content (before changes). | `so` |
-| `sn` | Show the **new** file content (with changes). | `sn` |
+| `g  <regexp>` | grep diffs | `g qregexp.rx\D` |
+| `gl  <regexp>` | grep local files | `g qregexp.rx\D` |
+| `g+` | select next file from last grep. | `g+` |
+| `g-` | select previous file from last grep. | `g+` |
+| `dd` | Show the standard Git diff for the currently selected file. | `dd` |
+| **`ddiw`** | Show the diff **ignoring whitespace** changes. | `ddiw` |
+| `do` | Show the **original** file content (before changes). | `do` |
+| `dn` | Show the **new** file content (with changes). | `dn` |
 | `ajim` | **Ask Gemini** a question about the current file, its diff, or a general coding topic. | `ajim` |
 
 ### 💬 Commenting and Review
