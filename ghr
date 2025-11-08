@@ -281,9 +281,9 @@ sub cmd_select_pr {
 
         print "Selected PR #$current_pr with $count files.\n";
 
-        # If caller requested a positive file index, select it
+        # If caller requested a positive file index, select it (quietly — don't auto-show diffs)
         if ($filenumber > 0 && $filenumber <= $count) {
-            cmd_select_file($filenumber, 0);
+            cmd_select_file($filenumber, 1);
         }
     } else {
         print "Usage: pr <PR#>\n";
