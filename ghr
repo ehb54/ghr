@@ -3,7 +3,8 @@ use strict;
 use warnings;
 use Cwd 'abs_path';
 use JSON 'decode_json', 'encode_json';
-use lib '.';
+use FindBin qw($Bin);
+use lib $Bin;
 use GHRUtils;
 use GHRCmds;
 
