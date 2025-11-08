@@ -62,11 +62,9 @@ sub check_gh_auth {
     # Check if 'gh' is installed and authenticated by running a simple command
     my $output = `gh auth status 2>&1`;
     if ($? != 0 || $output =~ /not logged into any GitHub hosts/) {
-        warn "Warning: 'gh' command failed or you are not logged in. Some operations may fail.\nPlease run 'gh auth login' to authenticate.\n";
-        return 0;
+        die "Error: 'gh' command failed or you are not logged in.\nPlease run 'gh auth login'.\n";
     }
     print "GitHub CLI is authenticated.\n";
-    return 1;
 }
 check_gh_auth();
 
@@ -492,8 +490,8 @@ sub cmd_show_new {
 
         # Hunk header: Reset counters
         if ($line =~ /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/) {
-            $new_line = $2;
-            $position = 0; # Position is relative to the start of the current hunk
+            $new_line  = $2;
+            $position  = 0; # Position is relative to the start of the current hunk
             
             if ($new_line == 0) {
                 print "\n-- Hunk starts (Removed File: No new lines to comment) --\n";
@@ -635,8 +633,8 @@ sub _map_pos_to_line {
     
     foreach my $line (split /\n/, $diff) {
         if ($line =~ /^@@ .* \+(\d+)(?:,\d+)? @@/) {
-            $new_line = $1;
-            $position = 0;
+            $new_line  = $1;
+            $position  = 0;
             next;
         }
 
